@@ -284,7 +284,83 @@ struct MeteredBlock {
 	/// Index of the first instruction (aka `Opcode`) in the block.
 	start_pos: usize,
 	/// Sum of costs of all instructions until end of the block.
-	cost: u32,
+	cost: BlockCostCounter,
+}
+
+/// Metering block cost counter, which handles arithmetic overflows.
+#[derive(Debug, PartialEq, PartialOrd)]
+#[cfg_attr(test, derive(Copy, Clone, Default))]
+struct BlockCostCounter {
+	/// Arithmetical overflows can occur while summarizing costs of some
+	/// instruction set. To handle this, we count amount of such overflows
+	/// with a separate counter and continue counting cost of metering block.
+	///
+	/// The overflow counter can overflow itself. However, this is not the
+	/// problem for the following reason. The returning after module instrumentation
+	/// set of instructions is a `Vec` which can't allocate more than `isize::MAX`
+	/// amount of memory, If, for instance, we are running the counter on the host
+	/// machine with 32 pointer size, reaching a huge amount of overflows can fail
+	/// instrumentation even if `overflows` is not overflowed, because we will
+	/// have a resulting set of instructions so big, that it will be impossible to
+	/// allocate a vector for it. So regardless of overflow of `overflows` field,
+	/// the field having huge value can fail instrumentation. This memory allocation
+	/// problem allows us to exhale and not think about the overflow of the
+	/// `overflows` field. What's more, the memory allocation problem (size of
+	/// instrumenting WASM) is a caller side concern.
+	overflows: usize,
+	/// Block's cost accumulator.
+	accumulator: u32,
+}
+
+impl BlockCostCounter {
+	/// Maximum value of the `gas` call argument.
+	///
+	/// This constant bounds maximum value of argument
+	/// in `gas` operation in order to prevent arithmetic
+	/// overflow. For more information see type docs.
+	const MAX_GAS_ARG: u32 = u32::MAX;
+
+	fn zero() -> Self {
+		Self::initialize(0)
+	}
+
+	fn initialize(initial_cost: u32) -> Self {
+		Self { overflows: 0, accumulator: initial_cost }
+	}
+
+	fn add(&mut self, counter: BlockCostCounter) {
+		// Overflow of `self.overflows` is not a big deal. See `overflows` field docs.
+		self.overflows = self.overflows.saturating_add(counter.overflows);
+		self.increment(counter.accumulator)
+	}
+
+	fn increment(&mut self, val: u32) {
+		if let Some(res) = self.accumulator.checked_add(val) {
+			self.accumulator = res;
+		} else {
+			// Case when self.accumulator + val > Self::MAX_GAS_ARG
+			self.accumulator = val - (u32::MAX - self.accumulator);
+			// Overflow of `self.overflows` is not a big deal. See `overflows` field docs.
+			self.overflows = self.overflows.saturating_add(1);
+		}
+	}
+
+	/// Returns the tuple of costs, where the first element is an amount of overflows
+	/// emerged when summating block's cost, and the second element is the current
+	/// (not overflowed remainder) block's cost.
+	fn block_costs(&self) -> (usize, u32) {
+		(self.overflows, self.accumulator)
+	}
+
+	/// Returns amount of costs for each of which the gas charging
+	/// procedure will be called.
+	fn costs_num(&self) -> usize {
+		if self.accumulator != 0 {
+			self.overflows + 1
+		} else {
+			self.overflows
+		}
+	}
 }
 
 /// Counter is used to manage state during the gas metering algorithm implemented by
@@ -311,7 +387,10 @@ impl Counter {
 		let index = self.stack.len();
 		self.stack.push(ControlBlock {
 			lowest_forward_br_target: index,
-			active_metered_block: MeteredBlock { start_pos: cursor, cost: 0 },
+			active_metered_block: MeteredBlock {
+				start_pos: cursor,
+				cost: BlockCostCounter::zero(),
+			},
 			is_loop,
 		})
 	}
@@ -358,7 +437,7 @@ impl Counter {
 			let control_block = self.stack.last_mut().ok_or(())?;
 			mem::replace(
 				&mut control_block.active_metered_block,
-				MeteredBlock { start_pos: cursor + 1, cost: 0 },
+				MeteredBlock { start_pos: cursor + 1, cost: BlockCostCounter::zero() },
 			)
 		};
 
@@ -375,12 +454,12 @@ impl Counter {
 				.expect("last_index is greater than 0; last_index is stack size - 1; qed");
 			let prev_metered_block = &mut prev_control_block.active_metered_block;
 			if closing_metered_block.start_pos == prev_metered_block.start_pos {
-				prev_metered_block.cost += closing_metered_block.cost;
+				prev_metered_block.cost.add(closing_metered_block.cost);
 				return Ok(())
 			}
 		}
 
-		if closing_metered_block.cost > 0 {
+		if closing_metered_block.cost > BlockCostCounter::zero() {
 			self.finalized_blocks.push(closing_metered_block);
 		}
 		Ok(())
@@ -425,7 +504,7 @@ impl Counter {
 	/// Increment the cost of the current block by the specified value.
 	fn increment(&mut self, val: u32) -> Result<(), ()> {
 		let top_block = self.active_metered_block()?;
-		top_block.cost = top_block.cost.checked_add(val).ok_or(())?;
+		top_block.cost.increment(val);
 		Ok(())
 	}
 }
@@ -569,11 +648,10 @@ fn insert_metering_calls(
 	blocks: Vec<MeteredBlock>,
 	gas_func: u32,
 ) -> Result<(), ()> {
-	use parity_wasm::elements::Instruction::*;
-
+	let block_cost_instrs = calculate_blocks_costs_num(&blocks);
 	// To do this in linear time, construct a new vector of instructions, copying over old
 	// instructions one by one and injecting new ones as required.
-	let new_instrs_len = instructions.elements().len() + 2 * blocks.len();
+	let new_instrs_len = instructions.elements().len() + 2 * block_cost_instrs;
 	let original_instrs =
 		mem::replace(instructions.elements_mut(), Vec::with_capacity(new_instrs_len));
 	let new_instrs = instructions.elements_mut();
@@ -583,8 +661,7 @@ fn insert_metering_calls(
 		// If there the next block starts at this position, inject metering instructions.
 		let used_block = if let Some(block) = block_iter.peek() {
 			if block.start_pos == original_pos {
-				new_instrs.push(I32Const(block.cost as i32));
-				new_instrs.push(Call(gas_func));
+				insert_gas_call(new_instrs, block, gas_func);
 				true
 			} else {
 				false
@@ -608,6 +685,28 @@ fn insert_metering_calls(
 	Ok(())
 }
 
+// Calculates total amount of costs (potential gas charging calls) in blocks
+fn calculate_blocks_costs_num(blocks: &[MeteredBlock]) -> usize {
+	blocks.iter().map(|block| block.cost.costs_num()).sum()
+}
+
+fn insert_gas_call(new_instrs: &mut Vec<Instruction>, current_block: &MeteredBlock, gas_func: u32) {
+	use parity_wasm::elements::Instruction::*;
+
+	let (mut overflows_num, current_cost) = current_block.cost.block_costs();
+	// First insert gas charging call with maximum argument due to overflows.
+	while overflows_num != 0 {
+		new_instrs.push(I32Const(BlockCostCounter::MAX_GAS_ARG as i32));
+		new_instrs.push(Call(gas_func));
+		overflows_num -= 1;
+	}
+	// Second insert remaining block's cost, if necessary.
+	if current_cost != 0 {
+		new_instrs.push(I32Const(current_cost as i32));
+		new_instrs.push(Call(gas_func));
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -621,6 +720,44 @@ mod tests {
 			.code_section()
 			.and_then(|code_section| code_section.bodies().get(index))
 			.map(|func_body| func_body.code().elements())
+	}
+
+	fn prebuilt_simple_module() -> elements::Module {
+		builder::module()
+			.global()
+			.value_type()
+			.i32()
+			.build()
+			.function()
+			.signature()
+			.param()
+			.i32()
+			.build()
+			.body()
+			.build()
+			.build()
+			.function()
+			.signature()
+			.param()
+			.i32()
+			.build()
+			.body()
+			.with_instructions(elements::Instructions::new(vec![
+				Call(0),
+				If(elements::BlockType::NoResult),
+				Call(0),
+				Call(0),
+				Call(0),
+				Else,
+				Call(0),
+				Call(0),
+				End,
+				Call(0),
+				End,
+			]))
+			.build()
+			.build()
+			.build()
 	}
 
 	#[test]
@@ -678,43 +815,8 @@ mod tests {
 
 	#[test]
 	fn call_index() {
-		let module = builder::module()
-			.global()
-			.value_type()
-			.i32()
-			.build()
-			.function()
-			.signature()
-			.param()
-			.i32()
-			.build()
-			.body()
-			.build()
-			.build()
-			.function()
-			.signature()
-			.param()
-			.i32()
-			.build()
-			.body()
-			.with_instructions(elements::Instructions::new(vec![
-				Call(0),
-				If(elements::BlockType::NoResult),
-				Call(0),
-				Call(0),
-				Call(0),
-				Else,
-				Call(0),
-				Call(0),
-				End,
-				Call(0),
-				End,
-			]))
-			.build()
-			.build()
-			.build();
-
-		let injected_module = inject(module, &ConstantCostRules::default(), "env").unwrap();
+		let injected_module =
+			inject(prebuilt_simple_module(), &ConstantCostRules::default(), "env").unwrap();
 
 		assert_eq!(
 			get_function_body(&injected_module, 1).unwrap(),
@@ -730,6 +832,46 @@ mod tests {
 				Call(1),
 				Else,
 				I32Const(2),
+				Call(0),
+				Call(1),
+				Call(1),
+				End,
+				Call(1),
+				End
+			][..]
+		);
+	}
+
+	#[test]
+	fn cost_overflow() {
+		let instruction_cost = u32::MAX / 2;
+		let injected_module =
+			inject(prebuilt_simple_module(), &ConstantCostRules::new(instruction_cost, 0), "env")
+				.unwrap();
+
+		assert_eq!(
+			get_function_body(&injected_module, 1).unwrap(),
+			&vec![
+				// (instruction_cost * 3) as i32 => ((2147483647 * 2) + 2147483647) as i32 =>
+				// ((2147483647 + 2147483647 + 1) + 2147483646) as i32 =>
+				// (u32::MAX as i32) + 2147483646 as i32
+				I32Const(-1),
+				Call(0),
+				I32Const((instruction_cost - 1) as i32),
+				Call(0),
+				Call(1),
+				If(elements::BlockType::NoResult),
+				// Same as upper
+				I32Const(-1),
+				Call(0),
+				I32Const((instruction_cost - 1) as i32),
+				Call(0),
+				Call(1),
+				Call(1),
+				Call(1),
+				Else,
+				// (instruction_cost * 2) as i32
+				I32Const(-2),
 				Call(0),
 				Call(1),
 				Call(1),
