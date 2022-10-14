@@ -156,29 +156,47 @@ pub fn inject<R: Rules>(
 	);
 
 	// back to plain module
-	let mut module = mbuilder.build();
+	let module = mbuilder.build();
+	let gas_func = module.import_count(elements::ImportCountType::Function) - 1;
 
+	post_injection_handler(module, rules, gas_func, gas_func as u32, 1)
+}
+
+/// Helper procedure that makes adjustments after gas metering function injected.
+///
+/// See documentation for [`inject`] for more details.
+pub fn post_injection_handler<R: Rules>(
+	mut module: elements::Module,
+	rules: &R,
+	gas_charge_index: usize,
+	inserted_index: u32,
+	inserted_count: u32,
+) -> Result<elements::Module, elements::Module> {
 	// calculate actual function index of the imported definition
 	//    (subtract all imports that are NOT functions)
 
-	let gas_func = module.import_count(elements::ImportCountType::Function) as u32 - 1;
+	let import_count = module.import_count(elements::ImportCountType::Function);
 	let total_func = module.functions_space() as u32;
 	let mut need_grow_counter = false;
 	let mut error = false;
 
-	// Updating calling addresses (all calls to function index >= `gas_func` should be incremented)
+	// Updating calling addresses (all calls to function index >= `inserted_index` should be incremented)
 	for section in module.sections_mut() {
 		match section {
 			elements::Section::Code(code_section) =>
-				for func_body in code_section.bodies_mut() {
+				for (i, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
+					if i + import_count == gas_charge_index {
+						continue;
+					}
+
 					for instruction in func_body.code_mut().elements_mut().iter_mut() {
 						if let Instruction::Call(call_index) = instruction {
-							if *call_index >= gas_func {
-								*call_index += 1
+							if *call_index >= inserted_index {
+								*call_index += inserted_count
 							}
 						}
 					}
-					if inject_counter(func_body.code_mut(), rules, gas_func).is_err() {
+					if inject_counter(func_body.code_mut(), rules, gas_charge_index as u32).is_err() {
 						error = true;
 						break
 					}
@@ -191,8 +209,8 @@ pub fn inject<R: Rules>(
 			elements::Section::Export(export_section) => {
 				for export in export_section.entries_mut() {
 					if let elements::Internal::Function(func_index) = export.internal_mut() {
-						if *func_index >= gas_func {
-							*func_index += 1
+						if *func_index >= inserted_index {
+							*func_index += inserted_count
 						}
 					}
 				}
@@ -203,22 +221,22 @@ pub fn inject<R: Rules>(
 				for segment in elements_section.entries_mut() {
 					// update all indirect call addresses initial values
 					for func_index in segment.members_mut() {
-						if *func_index >= gas_func {
-							*func_index += 1
+						if *func_index >= inserted_index {
+							*func_index += inserted_count
 						}
 					}
 				}
 			},
 			elements::Section::Start(start_idx) =>
-				if *start_idx >= gas_func {
-					*start_idx += 1
+				if *start_idx >= inserted_index {
+					*start_idx += inserted_count
 				},
 			elements::Section::Name(s) =>
 				for functions in s.functions_mut() {
 					*functions.names_mut() =
 						IndexMap::from_iter(functions.names().iter().map(|(mut idx, name)| {
-							if idx >= gas_func {
-								idx += 1;
+							if idx >= inserted_index {
+								idx += inserted_count;
 							}
 
 							(idx, name.clone())
@@ -232,10 +250,9 @@ pub fn inject<R: Rules>(
 		return Err(module)
 	}
 
-	if need_grow_counter {
-		Ok(add_grow_counter(module, rules, gas_func))
-	} else {
-		Ok(module)
+	match need_grow_counter {
+		true => Ok(add_grow_counter(module, rules, gas_charge_index as u32)),
+		false => Ok(module),
 	}
 }
 
