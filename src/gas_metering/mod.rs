@@ -172,6 +172,10 @@ pub fn post_injection_handler<R: Rules>(
 	inserted_index: u32,
 	inserted_count: u32,
 ) -> Result<elements::Module, elements::Module> {
+	if inserted_count == 0 {
+		return Err(module);
+	}
+
 	// calculate actual function index of the imported definition
 	//    (subtract all imports that are NOT functions)
 
