@@ -190,10 +190,10 @@ pub fn post_injection_handler<R: Rules>(
 	let import_count = module.import_count(elements::ImportCountType::Function);
 	let total_func = module.functions_space() as u32;
 	let mut need_grow_counter = false;
-	let mut error = false;
+	let mut result = Ok(());
 
 	// Updating calling addresses (all calls to function index >= `inserted_index` should be incremented)
-	for section in module.sections_mut() {
+	'outer_loop: for section in module.sections_mut() {
 		match section {
 			elements::Section::Code(code_section) =>
 				for (i, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
@@ -209,18 +209,21 @@ pub fn post_injection_handler<R: Rules>(
 						}
 					}
 
-					let locals_count =
-						func_body.locals().iter().map(|val_type| val_type.count()).sum();
-					if inject_counter(
-						func_body.code_mut(),
-						rules,
-						locals_count,
-						gas_charge_index as u32,
-					)
-					.is_err()
-					{
-						error = true;
-						break
+					result = func_body
+						.locals()
+						.iter()
+						.try_fold(0u32, |count, val_type| count.checked_add(val_type.count()))
+						.ok_or(())
+						.and_then(|locals_count| {
+							inject_counter(
+								func_body.code_mut(),
+								rules,
+								locals_count,
+								gas_charge_index as u32,
+							)
+						});
+					if result.is_err() {
+						break 'outer_loop
 					}
 
 					if rules.memory_grow_cost().enabled() &&
@@ -269,8 +272,8 @@ pub fn post_injection_handler<R: Rules>(
 		}
 	}
 
-	if error {
-		return Err(module)
+	if result.is_err() {
+		return Err(module);
 	}
 
 	match need_grow_counter {
