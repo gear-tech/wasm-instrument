@@ -32,6 +32,9 @@ pub trait Rules {
 	/// code into the function calling `memory.grow`. Therefore returning anything but
 	/// [`MemoryGrowCost::Free`] introduces some overhead to the `memory.grow` instruction.
 	fn memory_grow_cost(&self) -> MemoryGrowCost;
+
+	/// A surcharge cost to calling a function that is added per local variable of the function.
+	fn call_per_local_cost(&self) -> u32;
 }
 
 /// Dynamic costs for memory growth.
@@ -72,6 +75,7 @@ impl MemoryGrowCost {
 pub struct ConstantCostRules {
 	instruction_cost: u32,
 	memory_grow_cost: u32,
+	call_per_local_cost: u32,
 }
 
 impl ConstantCostRules {
@@ -79,15 +83,15 @@ impl ConstantCostRules {
 	///
 	/// Uses `instruction_cost` for every instruction and `memory_grow_cost` to dynamically
 	/// meter the memory growth instruction.
-	pub fn new(instruction_cost: u32, memory_grow_cost: u32) -> Self {
-		Self { instruction_cost, memory_grow_cost }
+	pub fn new(instruction_cost: u32, memory_grow_cost: u32, call_per_local_cost: u32) -> Self {
+		Self { instruction_cost, memory_grow_cost, call_per_local_cost, }
 	}
 }
 
 impl Default for ConstantCostRules {
 	/// Uses instruction cost of `1` and disables memory growth instrumentation.
 	fn default() -> Self {
-		Self { instruction_cost: 1, memory_grow_cost: 0 }
+		Self { instruction_cost: 1, memory_grow_cost: 0, call_per_local_cost: 1, }
 	}
 }
 
@@ -98,6 +102,10 @@ impl Rules for ConstantCostRules {
 
 	fn memory_grow_cost(&self) -> MemoryGrowCost {
 		NonZeroU32::new(self.memory_grow_cost).map_or(MemoryGrowCost::Free, MemoryGrowCost::Linear)
+	}
+
+	fn call_per_local_cost(&self) -> u32 {
+		self.call_per_local_cost
 	}
 }
 
@@ -200,10 +208,21 @@ pub fn post_injection_handler<R: Rules>(
 							}
 						}
 					}
-					if inject_counter(func_body.code_mut(), rules, gas_charge_index as u32).is_err() {
+
+					let locals_count =
+						func_body.locals().iter().map(|val_type| val_type.count()).sum();
+					if inject_counter(
+						func_body.code_mut(),
+						rules,
+						locals_count,
+						gas_charge_index as u32,
+					)
+					.is_err()
+					{
 						error = true;
 						break
 					}
+
 					if rules.memory_grow_cost().enabled() &&
 						inject_grow_counter(func_body.code_mut(), total_func) > 0
 					{
@@ -583,6 +602,7 @@ fn add_grow_counter<R: Rules>(
 fn determine_metered_blocks<R: Rules>(
 	instructions: &elements::Instructions,
 	rules: &R,
+	locals_count: u32,
 ) -> Result<Vec<MeteredBlock>, ()> {
 	use parity_wasm::elements::Instruction::*;
 
@@ -590,6 +610,10 @@ fn determine_metered_blocks<R: Rules>(
 
 	// Begin an implicit function (i.e. `func...end`) block.
 	counter.begin_control_block(0, false);
+
+	// Add locals initialization cost to the function block.
+	let locals_init_cost = rules.call_per_local_cost().checked_mul(locals_count).ok_or(())?;
+	counter.increment(locals_init_cost)?;
 
 	for cursor in 0..instructions.elements().len() {
 		let instruction = &instructions.elements()[cursor];
@@ -657,9 +681,10 @@ fn determine_metered_blocks<R: Rules>(
 fn inject_counter<R: Rules>(
 	instructions: &mut elements::Instructions,
 	rules: &R,
+	locals_count: u32,
 	gas_func: u32,
 ) -> Result<(), ()> {
-	let blocks = determine_metered_blocks(instructions, rules)?;
+	let blocks = determine_metered_blocks(instructions, rules, locals_count)?;
 	insert_metering_calls(instructions, blocks, gas_func)
 }
 
@@ -793,7 +818,7 @@ mod tests {
 			)"#,
 		);
 
-		let injected_module = inject(module, &ConstantCostRules::new(1, 10_000), "env").unwrap();
+		let injected_module = inject(module, &ConstantCostRules::new(1, 10_000, 1), "env").unwrap();
 
 		assert_eq!(
 			get_function_body(&injected_module, 0).unwrap(),
@@ -867,7 +892,7 @@ mod tests {
 	fn cost_overflow() {
 		let instruction_cost = u32::MAX / 2;
 		let injected_module =
-			inject(prebuilt_simple_module(), &ConstantCostRules::new(instruction_cost, 0), "env")
+			inject(prebuilt_simple_module(), &ConstantCostRules::new(instruction_cost, 0, instruction_cost), "env")
 				.unwrap();
 
 		assert_eq!(
