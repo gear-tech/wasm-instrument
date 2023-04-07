@@ -2,7 +2,7 @@ use super::resolve_func_type;
 use alloc::vec::Vec;
 use parity_wasm::elements::{self, BlockType, Type};
 
-#[cfg(feature = "sign_ext")]
+// #[cfg(feature = "sign_ext")]
 use parity_wasm::elements::SignExtInstruction;
 
 // The cost in stack items that should be charged per call of a function. This is
@@ -393,7 +393,7 @@ pub fn compute(func_idx: u32, module: &elements::Module) -> Result<u32, &'static
 				stack.push_values(1)?;
 			},
 
-			#[cfg(feature = "sign_ext")]
+			// #[cfg(feature = "sign_ext")]
 			SignExt(SignExtInstruction::I32Extend8S) |
 			SignExt(SignExtInstruction::I32Extend16S) |
 			SignExt(SignExtInstruction::I64Extend8S) |
