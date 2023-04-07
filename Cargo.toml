@@ -21,7 +21,7 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
-parity-wasm = { version = "0.45", default-features = false }
+parity-wasm = { version = "0.45.0", git = "https://github.com/gear-tech/parity-wasm", branch = "v0.45.0-sign-ext", default-features = false }
 
 [dev-dependencies]
 binaryen = "0.12"
