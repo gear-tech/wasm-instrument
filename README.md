@@ -1,3 +1,7 @@
+A fork of `wasm-instrument` with sign-ext feature enabled.
+
+---
+
 # wasm-instrument
 
 A Rust library containing a collection of wasm module instrumentations and transformations
