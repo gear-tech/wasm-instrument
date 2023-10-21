@@ -84,14 +84,14 @@ impl ConstantCostRules {
 	/// Uses `instruction_cost` for every instruction and `memory_grow_cost` to dynamically
 	/// meter the memory growth instruction.
 	pub fn new(instruction_cost: u32, memory_grow_cost: u32, call_per_local_cost: u32) -> Self {
-		Self { instruction_cost, memory_grow_cost, call_per_local_cost, }
+		Self { instruction_cost, memory_grow_cost, call_per_local_cost }
 	}
 }
 
 impl Default for ConstantCostRules {
 	/// Uses instruction cost of `1` and disables memory growth instrumentation.
 	fn default() -> Self {
-		Self { instruction_cost: 1, memory_grow_cost: 0, call_per_local_cost: 1, }
+		Self { instruction_cost: 1, memory_grow_cost: 0, call_per_local_cost: 1 }
 	}
 }
 
@@ -181,7 +181,7 @@ pub fn post_injection_handler<R: Rules>(
 	inserted_count: u32,
 ) -> Result<elements::Module, elements::Module> {
 	if inserted_count == 0 {
-		return Err(module);
+		return Err(module)
 	}
 
 	// calculate actual function index of the imported definition
@@ -192,13 +192,14 @@ pub fn post_injection_handler<R: Rules>(
 	let mut need_grow_counter = false;
 	let mut result = Ok(());
 
-	// Updating calling addresses (all calls to function index >= `inserted_index` should be incremented)
+	// Updating calling addresses (all calls to function index >= `inserted_index` should be
+	// incremented)
 	'outer_loop: for section in module.sections_mut() {
 		match section {
 			elements::Section::Code(code_section) =>
 				for (i, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
 					if i + import_count == gas_charge_index {
-						continue;
+						continue
 					}
 
 					for instruction in func_body.code_mut().elements_mut().iter_mut() {
@@ -273,7 +274,7 @@ pub fn post_injection_handler<R: Rules>(
 	}
 
 	if result.is_err() {
-		return Err(module);
+		return Err(module)
 	}
 
 	match need_grow_counter {
@@ -894,9 +895,12 @@ mod tests {
 	#[test]
 	fn cost_overflow() {
 		let instruction_cost = u32::MAX / 2;
-		let injected_module =
-			inject(prebuilt_simple_module(), &ConstantCostRules::new(instruction_cost, 0, instruction_cost), "env")
-				.unwrap();
+		let injected_module = inject(
+			prebuilt_simple_module(),
+			&ConstantCostRules::new(instruction_cost, 0, instruction_cost),
+			"env",
+		)
+		.unwrap();
 
 		assert_eq!(
 			get_function_body(&injected_module, 1).unwrap(),

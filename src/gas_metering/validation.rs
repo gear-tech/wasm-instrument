@@ -356,7 +356,8 @@ mod tests {
 				let rules = ConstantCostRules::default();
 				let locals_count = func_body.locals().iter().map(|val_type| val_type.count()).sum();
 
-				let metered_blocks = determine_metered_blocks(func_body.code(), &rules, locals_count).unwrap();
+				let metered_blocks =
+					determine_metered_blocks(func_body.code(), &rules, locals_count).unwrap();
 				let success =
 					validate_metering_injections(func_body, &rules, &metered_blocks).unwrap();
 				assert!(success);
