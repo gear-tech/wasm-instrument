@@ -193,22 +193,15 @@ fn instrument_functions<I: IntoIterator<Item = Instruction>>(
 where
 	I::IntoIter: ExactSizeIterator + Clone,
 {
-	let type_section =
-		module.type_section().ok_or("Due to validation type section should exists")?;
-
-	let function_section = module
-		.function_section()
-		.ok_or("Due to validation function section should exists")?;
-
-	let types = type_section.types().to_vec();
-	let signature_entries = function_section.entries().to_vec();
+	let types = module.type_section().map(|ts| ts.types()).unwrap_or(&[]).to_vec();
+	let functions = module.function_section().map(|fs| fs.entries()).unwrap_or(&[]).to_vec();
 
 	for section in module.sections_mut() {
 		if let elements::Section::Code(code_section) = section {
 			for (index, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
 				let opcodes = func_body.code_mut();
 
-				let signature_index = &signature_entries[index];
+				let signature_index = &functions[index];
 				let signature = &types[signature_index.type_ref() as usize];
 				let Type::Function(signature) = signature;
 
