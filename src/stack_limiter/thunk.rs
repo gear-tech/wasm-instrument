@@ -3,12 +3,12 @@ use alloc::collections::BTreeMap as Map;
 use alloc::vec::Vec;
 use parity_wasm::{
 	builder,
-	elements::{self, FunctionType, Internal},
+	elements::{self, FunctionType, Instruction, Internal},
 };
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
-use super::{resolve_func_type, Context};
+use super::{instrument_call, resolve_func_type, Context};
 
 struct Thunk {
 	signature: FunctionType,
@@ -17,10 +17,14 @@ struct Thunk {
 	callee_stack_cost: u32,
 }
 
-pub fn generate_thunks(
+pub fn generate_thunks<I: IntoIterator<Item = Instruction>>(
 	ctx: &mut Context,
 	module: elements::Module,
-) -> Result<elements::Module, &'static str> {
+	injection_fn: impl Fn(&FunctionType) -> I,
+) -> Result<elements::Module, &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
 	// First, we need to collect all function indices that should be replaced by thunks
 	let mut replacement_map: Map<u32, Thunk> = {
 		let exports = module.export_section().map(|es| es.entries()).unwrap_or(&[]);
@@ -66,24 +70,32 @@ pub fn generate_thunks(
 
 	let mut mbuilder = builder::from_module(module);
 	for (func_idx, thunk) in replacement_map.iter_mut() {
-		let instrumented_call = instrument_call!(
-			*func_idx,
-			thunk.callee_stack_cost as i32,
-			ctx.stack_height_global_idx(),
-			ctx.stack_limit()
-		);
+		let body_of_condition = injection_fn(&thunk.signature).into_iter();
+
 		// Thunk body consist of:
 		//  - argument pushing
 		//  - instrumented call
 		//  - end
-		let mut thunk_body: Vec<elements::Instruction> =
-			Vec::with_capacity(thunk.signature.params().len() + instrumented_call.len() + 1);
+
+		// To pre-allocate memory, we need to count `8 + N + 6`, i.e. `14 + N`.
+		// See `instrument_call` function for details.
+		let mut thunk_body: Vec<Instruction> =
+			Vec::with_capacity(thunk.signature.params().len() + (14 + body_of_condition.len()) + 1);
 
 		for (arg_idx, _) in thunk.signature.params().iter().enumerate() {
-			thunk_body.push(elements::Instruction::GetLocal(arg_idx as u32));
+			thunk_body.push(Instruction::GetLocal(arg_idx as u32));
 		}
-		thunk_body.extend_from_slice(&instrumented_call);
-		thunk_body.push(elements::Instruction::End);
+
+		instrument_call(
+			&mut thunk_body,
+			*func_idx,
+			thunk.callee_stack_cost as i32,
+			ctx.stack_height_global_idx(),
+			ctx.stack_limit(),
+			body_of_condition,
+		);
+
+		thunk_body.push(Instruction::End);
 
 		// TODO: Don't generate a signature, but find an existing one.
 
