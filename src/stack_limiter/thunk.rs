@@ -6,7 +6,7 @@ use parity_wasm::{
 	elements::{self, FunctionType, Instruction, Internal},
 };
 #[cfg(feature = "std")]
-use std::collections::HashMap as Map;
+use std::collections::BTreeMap as Map;
 
 use super::{instrument_call, resolve_func_type, Context};
 
