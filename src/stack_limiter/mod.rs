@@ -218,8 +218,8 @@ where
 /// Before:
 ///
 /// ```text
-/// get_local 0
-/// get_local 1
+/// local.get 0
+/// local.get 1
 /// call 228
 /// drop
 /// ```
@@ -227,8 +227,8 @@ where
 /// After:
 ///
 /// ```text
-/// get_local 0
-/// get_local 1
+/// local.get 0
+/// local.get 1
 ///
 /// < ... preamble ... >
 ///
@@ -415,8 +415,8 @@ mod tests {
 			r#"
 (module
 	(func (export "i32.add") (param i32 i32) (result i32)
-		get_local 0
-	get_local 1
+		local.get 0
+	local.get 1
 	i32.add
 	)
 )

@@ -289,12 +289,12 @@ pub fn post_injection_handler<R: Rules>(
 ///
 /// An example of block:
 ///
-/// ```ignore
+/// ```wasm
 /// loop
 ///   i32.const 1
-///   get_local 0
+///   local.get 0
 ///   i32.sub
-///   tee_local 0
+///   local.tee 0
 ///   br_if 0
 /// end
 /// ```
@@ -965,13 +965,13 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 1))
-				(get_global 0)))
+				(global.get 0)))
 		"#
 	}
 
@@ -980,23 +980,23 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
-					(get_global 0)
-					(get_global 0))
-				(get_global 0)))
+					(global.get 0)
+					(global.get 0)
+					(global.get 0))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 6))
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
-					(get_global 0)
-					(get_global 0))
-				(get_global 0)))
+					(global.get 0)
+					(global.get 0)
+					(global.get 0))
+				(global.get 0)))
 		"#
 	}
 
@@ -1005,33 +1005,33 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(if
 					(then
-						(get_global 0)
-						(get_global 0)
-						(get_global 0))
+						(global.get 0)
+						(global.get 0)
+						(global.get 0))
 					(else
-						(get_global 0)
-						(get_global 0)))
-				(get_global 0)))
+						(global.get 0)
+						(global.get 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 3))
-				(get_global 0)
+				(global.get 0)
 				(if
 					(then
 						(call 0 (i32.const 3))
-						(get_global 0)
-						(get_global 0)
-						(get_global 0))
+						(global.get 0)
+						(global.get 0)
+						(global.get 0))
 					(else
 						(call 0 (i32.const 2))
-						(get_global 0)
-						(get_global 0)))
-				(get_global 0)))
+						(global.get 0)
+						(global.get 0)))
+				(global.get 0)))
 		"#
 	}
 
@@ -1040,28 +1040,28 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
+					(global.get 0)
 					(drop)
 					(br 0)
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 6))
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
+					(global.get 0)
 					(drop)
 					(br 0)
 					(call 0 (i32.const 2))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#
 	}
 
@@ -1070,37 +1070,37 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
+					(global.get 0)
 					(if
 						(then
-							(get_global 0)
-							(get_global 0)
+							(global.get 0)
+							(global.get 0)
 							(drop)
 							(br_if 1)))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 5))
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
+					(global.get 0)
 					(if
 						(then
 							(call 0 (i32.const 4))
-							(get_global 0)
-							(get_global 0)
+							(global.get 0)
+							(global.get 0)
 							(drop)
 							(br_if 1)))
 					(call 0 (i32.const 2))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#
 	}
 
@@ -1109,44 +1109,44 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(loop
-					(get_global 0)
+					(global.get 0)
 					(if
 						(then
-							(get_global 0)
+							(global.get 0)
 							(br_if 0))
 						(else
-							(get_global 0)
-							(get_global 0)
+							(global.get 0)
+							(global.get 0)
 							(drop)
 							(br_if 1)))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 3))
-				(get_global 0)
+				(global.get 0)
 				(loop
 					(call 0 (i32.const 4))
-					(get_global 0)
+					(global.get 0)
 					(if
 						(then
 							(call 0 (i32.const 2))
-							(get_global 0)
+							(global.get 0)
 							(br_if 0))
 						(else
 							(call 0 (i32.const 4))
-							(get_global 0)
-							(get_global 0)
+							(global.get 0)
+							(global.get 0)
 							(drop)
 							(br_if 1)))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#
 	}
 
@@ -1155,23 +1155,23 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(if
 					(then
 						(return)))
-				(get_global 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 2))
-				(get_global 0)
+				(global.get 0)
 				(if
 					(then
 						(call 0 (i32.const 1))
 						(return)))
 				(call 0 (i32.const 1))
-				(get_global 0)))
+				(global.get 0)))
 		"#
 	}
 
@@ -1180,23 +1180,23 @@ mod tests {
 		input = r#"
 		(module
 			(func (result i32)
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
+					(global.get 0)
 					(if
 						(then (br 1))
 						(else (br 0)))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#;
 		expected = r#"
 		(module
 			(func (result i32)
 				(call 0 (i32.const 5))
-				(get_global 0)
+				(global.get 0)
 				(block
-					(get_global 0)
+					(global.get 0)
 					(if
 						(then
 							(call 0 (i32.const 1))
@@ -1205,9 +1205,9 @@ mod tests {
 							(call 0 (i32.const 1))
 							(br 0)))
 					(call 0 (i32.const 2))
-					(get_global 0)
+					(global.get 0)
 					(drop))
-				(get_global 0)))
+				(global.get 0)))
 		"#
 	}
 

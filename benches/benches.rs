@@ -2,13 +2,13 @@ use criterion::{
 	criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup, Criterion,
 	Throughput,
 };
+use gwasm_instrument::{
+	gas_metering, inject_stack_limiter,
+	parity_wasm::{deserialize_buffer, elements::Module},
+};
 use std::{
 	fs::{read, read_dir},
 	path::PathBuf,
-};
-use wasm_instrument::{
-	gas_metering, inject_stack_limiter,
-	parity_wasm::{deserialize_buffer, elements::Module},
 };
 
 fn fixture_dir() -> PathBuf {
