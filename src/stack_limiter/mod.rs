@@ -41,6 +41,7 @@ where
 	I::IntoIter: ExactSizeIterator + Clone,
 	F: Fn(&FunctionType) -> I,
 {
+	pub stack_limit: u32,
 	pub injection_fn: F,
 	pub stack_height_export_name: Option<&'a str>,
 }
@@ -49,13 +50,12 @@ where
 /// is reached and the export name of the stack height global.
 pub fn inject_with_config<I: IntoIterator<Item = Instruction>>(
 	mut module: elements::Module,
-	stack_limit: u32,
 	injection_config: InjectionConfig<'_, I, impl Fn(&FunctionType) -> I>,
 ) -> Result<elements::Module, &'static str>
 where
 	I::IntoIter: ExactSizeIterator + Clone,
 {
-	let InjectionConfig { injection_fn, stack_height_export_name } = injection_config;
+	let InjectionConfig { stack_limit, injection_fn, stack_height_export_name } = injection_config;
 	let mut ctx = Context {
 		stack_height_global_idx: generate_stack_height_global(
 			&mut module,
@@ -127,8 +127,8 @@ pub fn inject(
 ) -> Result<elements::Module, &'static str> {
 	inject_with_config(
 		module,
-		stack_limit,
 		InjectionConfig {
+			stack_limit,
 			injection_fn: |_| [Instruction::Unreachable],
 			stack_height_export_name: None,
 		},
@@ -198,7 +198,7 @@ where
 
 	// Don't create context when there are no functions (this will fail).
 	if functions_space == 0 {
-		return Ok(Vec::new());
+		return Ok(Vec::new())
 	}
 
 	// This context already contains the module, number of imports and section references.
