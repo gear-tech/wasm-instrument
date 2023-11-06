@@ -34,17 +34,33 @@ impl Context {
 	}
 }
 
-/// Same as the [`inject`] function, but allows to configure exit when the stack limit is reached.
-pub fn inject_with_instructions<I: IntoIterator<Item = Instruction>>(
+/// Represents the injection configuration. See [`inject_with_config`] for more details.
+pub struct InjectionConfig<'a, I, F>
+where
+	I: IntoIterator<Item = Instruction>,
+	I::IntoIter: ExactSizeIterator + Clone,
+	F: Fn(&FunctionType) -> I,
+{
+	pub injection_fn: F,
+	pub stack_height_export_name: Option<&'a str>,
+}
+
+/// Same as the [`inject`] function, but allows to configure exit instructions when the stack limit
+/// is reached and the export name of the stack height global.
+pub fn inject_with_config<I: IntoIterator<Item = Instruction>>(
 	mut module: elements::Module,
 	stack_limit: u32,
-	injection_fn: impl Fn(&FunctionType) -> I,
+	injection_config: InjectionConfig<'_, I, impl Fn(&FunctionType) -> I>,
 ) -> Result<elements::Module, &'static str>
 where
 	I::IntoIter: ExactSizeIterator + Clone,
 {
+	let InjectionConfig { injection_fn, stack_height_export_name } = injection_config;
 	let mut ctx = Context {
-		stack_height_global_idx: generate_stack_height_global(&mut module),
+		stack_height_global_idx: generate_stack_height_global(
+			&mut module,
+			stack_height_export_name,
+		),
 		func_stack_costs: compute_stack_costs(&module, &injection_fn)?,
 		stack_limit,
 	};
@@ -109,11 +125,21 @@ pub fn inject(
 	module: elements::Module,
 	stack_limit: u32,
 ) -> Result<elements::Module, &'static str> {
-	inject_with_instructions(module, stack_limit, |_| [Instruction::Unreachable])
+	inject_with_config(
+		module,
+		stack_limit,
+		InjectionConfig {
+			injection_fn: |_| [Instruction::Unreachable],
+			stack_height_export_name: None,
+		},
+	)
 }
 
 /// Generate a new global that will be used for tracking current stack height.
-fn generate_stack_height_global(module: &mut elements::Module) -> u32 {
+fn generate_stack_height_global(
+	module: &mut elements::Module,
+	stack_height_export_name: Option<&str>,
+) -> u32 {
 	let global_entry = builder::global()
 		.value_type()
 		.i32()
@@ -121,19 +147,38 @@ fn generate_stack_height_global(module: &mut elements::Module) -> u32 {
 		.init_expr(Instruction::I32Const(0))
 		.build();
 
-	// Try to find an existing global section.
-	for section in module.sections_mut() {
-		if let elements::Section::Global(gs) = section {
-			gs.entries_mut().push(global_entry);
-			return (gs.entries().len() as u32) - 1
+	let stack_height_global_idx = match module.global_section_mut() {
+		Some(global_section) => {
+			global_section.entries_mut().push(global_entry);
+			(global_section.entries().len() as u32) - 1
+		},
+		None => {
+			module.sections_mut().push(elements::Section::Global(
+				elements::GlobalSection::with_entries(vec![global_entry]),
+			));
+			0
+		},
+	};
+
+	if let Some(stack_height_export_name) = stack_height_export_name {
+		let export_entry = elements::ExportEntry::new(
+			stack_height_export_name.into(),
+			elements::Internal::Global(stack_height_global_idx),
+		);
+
+		match module.export_section_mut() {
+			Some(export_section) => {
+				export_section.entries_mut().push(export_entry);
+			},
+			None => {
+				module.sections_mut().push(elements::Section::Export(
+					elements::ExportSection::with_entries(vec![export_entry]),
+				));
+			},
 		}
 	}
 
-	// Existing section not found, create one!
-	module
-		.sections_mut()
-		.push(elements::Section::Global(elements::GlobalSection::with_entries(vec![global_entry])));
-	0
+	stack_height_global_idx
 }
 
 /// Calculate stack costs for all functions.
