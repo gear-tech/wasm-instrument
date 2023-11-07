@@ -21,9 +21,8 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
-# TODO: publish 0.45.1 to crates io
-parity-wasm = { version = "0.45.1", git = "https://github.com/gear-tech/parity-wasm", branch = "v0.45.1-sign-ext", default-features = false }
-# parity-wasm = { package = "gear-wasm", version = "0.45.1", default-features = false }
+# parity-wasm = { version = "0.45.1", git = "https://github.com/gear-tech/parity-wasm", branch = "v0.45.1-sign-ext", default-features = false }
+parity-wasm = { package = "gear-wasm", version = "0.45.1", default-features = false }
 
 [dev-dependencies]
 binaryen = "0.12"
