@@ -219,8 +219,7 @@ where
 					break 'block None
 				}
 
-				let ty = resolve_func_type(idx, self.context.module)?;
-				let body_of_condition = (self.injection_fn)(ty).into_iter();
+				let body_of_condition = (self.injection_fn)(func_signature).into_iter();
 
 				let mut instructions = Vec::with_capacity(14 + body_of_condition.len());
 				instrument_call(&mut instructions, idx, 0, 0, 0, body_of_condition);
