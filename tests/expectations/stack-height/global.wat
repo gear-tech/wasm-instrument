@@ -35,10 +35,8 @@
     drop
   )
   (func (;3;) (type 1) (param i32 i32) (result i32)
-    local.get 0
-    local.get 1
     global.get 1
-    i32.const 6
+    i32.const 5
     i32.add
     global.set 1
     global.get 1
@@ -47,9 +45,11 @@
     if ;; label = @1
       unreachable
     end
+    local.get 0
+    local.get 1
     call $i32.add
     global.get 1
-    i32.const 6
+    i32.const 5
     i32.sub
     global.set 1
   )

@@ -49,8 +49,10 @@ where
 				let body_of_condition = injection_fn(&signature).into_iter();
 
 				// Thunk body consist of:
+				//  - preamble
 				//  - argument pushing
-				//  - instrumented call
+				//  - original call
+				//  - postamble
 				//  - end
 
 				// To pre-allocate memory, we need to count `8 + N + 6`, i.e. `14 + N`.
@@ -59,9 +61,11 @@ where
 					signature.params().len() + (14 + body_of_condition.len()) + 1,
 				);
 
-				for (arg_idx, _) in signature.params().iter().enumerate() {
-					thunk_body.push(Instruction::GetLocal(arg_idx as u32));
-				}
+				let arguments = signature
+					.params()
+					.iter()
+					.enumerate()
+					.map(|(arg_idx, _)| Instruction::GetLocal(arg_idx as u32));
 
 				const CALLEE_STACK_COST_PLACEHOLDER: i32 = 1248163264;
 				instrument_call(
@@ -71,6 +75,7 @@ where
 					ctx.stack_height_global_idx(),
 					ctx.stack_limit(),
 					body_of_condition,
+					arguments,
 				);
 
 				thunk_body.push(Instruction::End);

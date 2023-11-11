@@ -154,6 +154,7 @@ where
 	stack: Stack,
 	max_height: u32,
 	injection_fn: F,
+	count_instrumented_calls: bool,
 }
 
 impl<'a, I, F> MaxStackHeightCounter<'a, I, F>
@@ -167,7 +168,19 @@ where
 		context: MaxStackHeightCounterContext<'a>,
 		injection_fn: F,
 	) -> MaxStackHeightCounter<'a, I, F> {
-		Self { context, stack: Stack::new(), max_height: 0, injection_fn }
+		Self {
+			context,
+			stack: Stack::new(),
+			max_height: 0,
+			injection_fn,
+			count_instrumented_calls: false,
+		}
+	}
+
+	/// Should the overhead of the [`instrument_call`] function be taken into account?
+	pub fn count_instrumented_calls(mut self, count_instrumented_calls: bool) -> Self {
+		self.count_instrumented_calls = count_instrumented_calls;
+		self
 	}
 
 	/// Tries to calculate the maximum stack height for the `func_idx` defined in the wasm module.
@@ -213,6 +226,10 @@ where
 
 		for instruction in instructions {
 			let maybe_instructions = 'block: {
+				if !self.count_instrumented_calls {
+					break 'block None
+				}
+
 				let &Instruction::Call(idx) = instruction else { break 'block None };
 
 				if idx < self.context.func_imports {
@@ -222,7 +239,7 @@ where
 				let body_of_condition = (self.injection_fn)(func_signature).into_iter();
 
 				let mut instructions = Vec::with_capacity(14 + body_of_condition.len());
-				instrument_call(&mut instructions, idx, 0, 0, 0, body_of_condition);
+				instrument_call(&mut instructions, idx, 0, 0, 0, body_of_condition, []);
 
 				Some(instructions)
 			};
@@ -499,6 +516,7 @@ mod tests {
 
 	fn compute(func_idx: u32, module: &elements::Module) -> Result<u32, &'static str> {
 		MaxStackHeightCounter::new_with_context(module.try_into()?, |_| [Instruction::Unreachable])
+			.count_instrumented_calls(true)
 			.compute_for_defined_func(func_idx)
 	}
 

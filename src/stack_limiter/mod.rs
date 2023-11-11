@@ -247,6 +247,7 @@ where
 	}
 
 	let max_stack_height = MaxStackHeightCounter::new_with_context(context, injection_fn)
+		.count_instrumented_calls(true)
 		.compute_for_defined_func(defined_func_idx)?;
 
 	locals_count
@@ -363,6 +364,7 @@ where
 					ctx.stack_height_global_idx(),
 					ctx.stack_limit(),
 					body_of_condition.clone(),
+					[],
 				);
 				true
 			} else {
@@ -387,9 +389,41 @@ where
 }
 
 /// This function generates preamble and postamble.
+#[inline]
 fn instrument_call(
 	instructions: &mut Vec<Instruction>,
 	callee_idx: u32,
+	callee_stack_cost: i32,
+	stack_height_global_idx: u32,
+	stack_limit: u32,
+	body_of_condition: impl IntoIterator<Item = Instruction>,
+	arguments: impl IntoIterator<Item = Instruction>,
+) {
+	use Instruction::*;
+
+	// 8 + body_of_condition.len() + 1 instructions
+	generate_preamble(
+		instructions,
+		callee_stack_cost,
+		stack_height_global_idx,
+		stack_limit,
+		body_of_condition,
+	);
+
+	// arguments.len() instructions
+	instructions.extend(arguments);
+
+	// Original call, 1 instruction
+	instructions.push(Call(callee_idx));
+
+	// 4 instructions
+	generate_postamble(instructions, callee_stack_cost, stack_height_global_idx);
+}
+
+/// This function generates preamble.
+#[inline]
+fn generate_preamble(
+	instructions: &mut Vec<Instruction>,
 	callee_stack_cost: i32,
 	stack_height_global_idx: u32,
 	stack_limit: u32,
@@ -411,14 +445,24 @@ fn instrument_call(
 		If(elements::BlockType::NoResult),
 	]);
 
-	// N instructions
+	// body_of_condition.len() instructions
 	instructions.extend(body_of_condition);
 
-	// 6 instructions
+	// 1 instruction
+	instructions.push(End);
+}
+
+/// This function generates postamble.
+#[inline]
+fn generate_postamble(
+	instructions: &mut Vec<Instruction>,
+	callee_stack_cost: i32,
+	stack_height_global_idx: u32,
+) {
+	use Instruction::*;
+
+	// 4 instructions
 	instructions.extend_from_slice(&[
-		End,
-		// Original call
-		Call(callee_idx),
 		// stack_height -= stack_cost(F)
 		GetGlobal(stack_height_global_idx),
 		I32Const(callee_stack_cost),
