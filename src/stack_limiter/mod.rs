@@ -266,19 +266,18 @@ where
 	let types = module.type_section().map(|ts| ts.types()).unwrap_or(&[]).to_vec();
 	let functions = module.function_section().map(|fs| fs.entries()).unwrap_or(&[]).to_vec();
 
-	for section in module.sections_mut() {
-		if let elements::Section::Code(code_section) = section {
-			for (index, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
-				let opcodes = func_body.code_mut();
+	if let Some(code_section) = module.code_section_mut() {
+		for (func_idx, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
+			let opcodes = func_body.code_mut();
 
-				let signature_index = &functions[index];
-				let signature = &types[signature_index.type_ref() as usize];
-				let Type::Function(signature) = signature;
+			let signature_index = &functions[func_idx];
+			let signature = &types[signature_index.type_ref() as usize];
+			let Type::Function(signature) = signature;
 
-				instrument_function(ctx, opcodes, signature, &injection_fn)?;
-			}
+			instrument_function(ctx, opcodes, signature, &injection_fn)?;
 		}
 	}
+
 	Ok(())
 }
 
