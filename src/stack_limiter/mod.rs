@@ -34,43 +34,6 @@ impl Context {
 	}
 }
 
-/// Represents the injection configuration. See [`inject_with_config`] for more details.
-pub struct InjectionConfig<'a, I, F>
-where
-	I: IntoIterator<Item = Instruction>,
-	I::IntoIter: ExactSizeIterator + Clone,
-	F: Fn(&FunctionType) -> I,
-{
-	pub stack_limit: u32,
-	pub injection_fn: F,
-	pub stack_height_export_name: Option<&'a str>,
-}
-
-/// Same as the [`inject`] function, but allows to configure exit instructions when the stack limit
-/// is reached and the export name of the stack height global.
-pub fn inject_with_config<I: IntoIterator<Item = Instruction>>(
-	mut module: elements::Module,
-	injection_config: InjectionConfig<'_, I, impl Fn(&FunctionType) -> I>,
-) -> Result<elements::Module, &'static str>
-where
-	I::IntoIter: ExactSizeIterator + Clone,
-{
-	let InjectionConfig { stack_limit, injection_fn, stack_height_export_name } = injection_config;
-	let mut ctx = Context {
-		stack_height_global_idx: generate_stack_height_global(
-			&mut module,
-			stack_height_export_name,
-		),
-		func_stack_costs: compute_stack_costs(&module, &injection_fn)?,
-		stack_limit,
-	};
-
-	instrument_functions(&mut ctx, &mut module, &injection_fn)?;
-	let module = thunk::generate_thunks(&mut ctx, module, &injection_fn)?;
-
-	Ok(module)
-}
-
 /// Inject the instumentation that makes stack overflows deterministic, by introducing
 /// an upper bound of the stack size.
 ///
@@ -133,6 +96,43 @@ pub fn inject(
 			stack_height_export_name: None,
 		},
 	)
+}
+
+/// Represents the injection configuration. See [`inject_with_config`] for more details.
+pub struct InjectionConfig<'a, I, F>
+where
+	I: IntoIterator<Item = Instruction>,
+	I::IntoIter: ExactSizeIterator + Clone,
+	F: Fn(&FunctionType) -> I,
+{
+	pub stack_limit: u32,
+	pub injection_fn: F,
+	pub stack_height_export_name: Option<&'a str>,
+}
+
+/// Same as the [`inject`] function, but allows to configure exit instructions when the stack limit
+/// is reached and the export name of the stack height global.
+pub fn inject_with_config<I: IntoIterator<Item = Instruction>>(
+	mut module: elements::Module,
+	injection_config: InjectionConfig<'_, I, impl Fn(&FunctionType) -> I>,
+) -> Result<elements::Module, &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
+	let InjectionConfig { stack_limit, injection_fn, stack_height_export_name } = injection_config;
+	let mut ctx = Context {
+		stack_height_global_idx: generate_stack_height_global(
+			&mut module,
+			stack_height_export_name,
+		),
+		func_stack_costs: compute_stack_costs(&module, &injection_fn)?,
+		stack_limit,
+	};
+
+	instrument_functions(&mut ctx, &mut module, &injection_fn)?;
+	let module = thunk::generate_thunks(&mut ctx, module, &injection_fn)?;
+
+	Ok(module)
 }
 
 /// Generate a new global that will be used for tracking current stack height.
