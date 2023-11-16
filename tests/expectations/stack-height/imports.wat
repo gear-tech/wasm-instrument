@@ -12,7 +12,7 @@
   )
   (func (;3;) (type 1) (param i32 i32) (result i32)
     global.get 0
-    i32.const 5
+    i32.const 9
     i32.add
     global.set 0
     global.get 0
@@ -25,7 +25,7 @@
     local.get 1
     call 2
     global.get 0
-    i32.const 5
+    i32.const 9
     i32.sub
     global.set 0
   )

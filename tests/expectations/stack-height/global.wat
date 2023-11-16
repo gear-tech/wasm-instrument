@@ -18,7 +18,7 @@
     local.get $tmp
     local.get $arg
     global.get 1
-    i32.const 2
+    i32.const 4
     i32.add
     global.set 1
     global.get 1
@@ -29,14 +29,14 @@
     end
     call $i32.add
     global.get 1
-    i32.const 2
+    i32.const 4
     i32.sub
     global.set 1
     drop
   )
   (func (;3;) (type 1) (param i32 i32) (result i32)
     global.get 1
-    i32.const 5
+    i32.const 9
     i32.add
     global.set 1
     global.get 1
@@ -49,7 +49,7 @@
     local.get 1
     call $i32.add
     global.get 1
-    i32.const 5
+    i32.const 9
     i32.sub
     global.set 1
   )

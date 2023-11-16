@@ -2,7 +2,7 @@
   (type (;0;) (func))
   (func (;0;) (type 0)
     global.get 0
-    i32.const 2
+    i32.const 4
     i32.add
     global.set 0
     global.get 0
@@ -13,13 +13,13 @@
     end
     call 0
     global.get 0
-    i32.const 2
+    i32.const 4
     i32.sub
     global.set 0
   )
   (func (;1;) (type 0)
     global.get 0
-    i32.const 2
+    i32.const 4
     i32.add
     global.set 0
     global.get 0
@@ -30,13 +30,13 @@
     end
     call 0
     global.get 0
-    i32.const 2
+    i32.const 4
     i32.sub
     global.set 0
   )
   (func (;2;) (type 0)
     global.get 0
-    i32.const 4
+    i32.const 8
     i32.add
     global.set 0
     global.get 0
@@ -47,7 +47,7 @@
     end
     call 1
     global.get 0
-    i32.const 4
+    i32.const 8
     i32.sub
     global.set 0
   )
