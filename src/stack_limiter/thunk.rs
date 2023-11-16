@@ -30,16 +30,9 @@ where
 		// Replacement map is at least export section size.
 		let mut replacement_map: Map<u32, Thunk> = Map::new();
 
-		let mut peekable_iter = thunk_function_indexes(&module).peekable();
-		let maybe_context: Option<MaxStackHeightCounterContext> = if peekable_iter.peek().is_some()
-		{
-			let module_ref = &module;
-			Some(module_ref.try_into()?)
-		} else {
-			None
-		};
+		let mut maybe_context: Option<MaxStackHeightCounterContext> = None;
 
-		for func_idx in peekable_iter {
+		for func_idx in thunk_function_indexes(&module) {
 			let mut callee_stack_cost =
 				ctx.stack_cost(func_idx).ok_or("function index isn't found")?;
 
@@ -79,6 +72,11 @@ where
 				);
 
 				thunk_body.push(Instruction::End);
+
+				// Try to initialize MaxStackHeightCounterContext once
+				if maybe_context.is_none() {
+					maybe_context = Some((&module).try_into()?);
+				}
 
 				// Update callee_stack_cost to charge for the thunk call itself
 				let context =
