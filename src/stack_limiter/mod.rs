@@ -263,8 +263,18 @@ fn instrument_functions<I: IntoIterator<Item = Instruction>>(
 where
 	I::IntoIter: ExactSizeIterator + Clone,
 {
-	let types = module.type_section().map(|ts| ts.types()).unwrap_or(&[]).to_vec();
-	let functions = module.function_section().map(|fs| fs.entries()).unwrap_or(&[]).to_vec();
+	if ctx.func_stack_costs.is_empty() {
+		return Ok(())
+	}
+
+	// Func stack costs collection is not empty, so stack height counter has counted costs
+	// for module with non empty function and type sections.
+	let types = module.type_section().map(|ts| ts.types()).expect("checked earlier").to_vec();
+	let functions = module
+		.function_section()
+		.map(|fs| fs.entries())
+		.expect("checked earlier")
+		.to_vec();
 
 	if let Some(code_section) = module.code_section_mut() {
 		for (func_idx, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
