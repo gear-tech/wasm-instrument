@@ -398,7 +398,6 @@ where
 }
 
 /// This function generates preamble and postamble.
-#[inline]
 fn instrument_call(
 	instructions: &mut Vec<Instruction>,
 	callee_idx: u32,
@@ -430,7 +429,6 @@ fn instrument_call(
 }
 
 /// This function generates preamble.
-#[inline]
 fn generate_preamble(
 	instructions: &mut Vec<Instruction>,
 	callee_stack_cost: i32,
