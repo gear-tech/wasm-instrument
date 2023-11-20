@@ -6,7 +6,7 @@
   )
   (func (;1;) (type 0)
     global.get 0
-    i32.const 3
+    i32.const 7
     i32.add
     global.set 0
     global.get 0
@@ -17,7 +17,7 @@
     end
     call 0
     global.get 0
-    i32.const 3
+    i32.const 7
     i32.sub
     global.set 0
   )

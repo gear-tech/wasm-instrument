@@ -1,10 +1,10 @@
+use gwasm_instrument::{
+	gas_metering, inject_stack_limiter,
+	parity_wasm::{deserialize_buffer, elements::Module, serialize},
+};
 use std::{
 	fs::{read, read_dir},
 	path::PathBuf,
-};
-use wasm_instrument::{
-	gas_metering, inject_stack_limiter,
-	parity_wasm::{deserialize_buffer, elements::Module, serialize},
 };
 
 fn fixture_dir() -> PathBuf {
@@ -24,7 +24,7 @@ fn print_size_overhead() {
 		.map(|entry| {
 			let entry = entry.unwrap();
 			let (orig_len, orig_module) = {
-				let bytes = read(&entry.path()).unwrap();
+				let bytes = read(entry.path()).unwrap();
 				let len = bytes.len();
 				let module: Module = deserialize_buffer(&bytes).unwrap();
 				(len, module)

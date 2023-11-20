@@ -2,43 +2,16 @@
 
 use alloc::{vec, vec::Vec};
 use core::mem;
+use max_height::{MaxStackHeightCounter, MaxStackHeightCounterContext};
 use parity_wasm::{
 	builder,
-	elements::{self, Instruction, Instructions, Type},
+	elements::{self, FunctionType, Instruction, Instructions, Type},
 };
-
-/// Macro to generate preamble and postamble.
-macro_rules! instrument_call {
-	($callee_idx: expr, $callee_stack_cost: expr, $stack_height_global_idx: expr, $stack_limit: expr) => {{
-		use $crate::parity_wasm::elements::Instruction::*;
-		[
-			// stack_height += stack_cost(F)
-			GetGlobal($stack_height_global_idx),
-			I32Const($callee_stack_cost),
-			I32Add,
-			SetGlobal($stack_height_global_idx),
-			// if stack_counter > LIMIT: unreachable
-			GetGlobal($stack_height_global_idx),
-			I32Const($stack_limit as i32),
-			I32GtU,
-			If(elements::BlockType::NoResult),
-			Unreachable,
-			End,
-			// Original call
-			Call($callee_idx),
-			// stack_height -= stack_cost(F)
-			GetGlobal($stack_height_global_idx),
-			I32Const($callee_stack_cost),
-			I32Sub,
-			SetGlobal($stack_height_global_idx),
-		]
-	}};
-}
 
 mod max_height;
 mod thunk;
 
-pub struct Context {
+struct Context {
 	stack_height_global_idx: u32,
 	func_stack_costs: Vec<u32>,
 	stack_limit: u32,
@@ -112,23 +85,61 @@ impl Context {
 ///   frames.
 /// - upon entry into the function entire stack frame is allocated.
 pub fn inject(
-	mut module: elements::Module,
+	module: elements::Module,
 	stack_limit: u32,
 ) -> Result<elements::Module, &'static str> {
+	inject_with_config(
+		module,
+		InjectionConfig {
+			stack_limit,
+			injection_fn: |_| [Instruction::Unreachable],
+			stack_height_export_name: None,
+		},
+	)
+}
+
+/// Represents the injection configuration. See [`inject_with_config`] for more details.
+pub struct InjectionConfig<'a, I, F>
+where
+	I: IntoIterator<Item = Instruction>,
+	I::IntoIter: ExactSizeIterator + Clone,
+	F: Fn(&FunctionType) -> I,
+{
+	pub stack_limit: u32,
+	pub injection_fn: F,
+	pub stack_height_export_name: Option<&'a str>,
+}
+
+/// Same as the [`inject`] function, but allows to configure exit instructions when the stack limit
+/// is reached and the export name of the stack height global.
+pub fn inject_with_config<I: IntoIterator<Item = Instruction>>(
+	mut module: elements::Module,
+	injection_config: InjectionConfig<'_, I, impl Fn(&FunctionType) -> I>,
+) -> Result<elements::Module, &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
+	let InjectionConfig { stack_limit, injection_fn, stack_height_export_name } = injection_config;
 	let mut ctx = Context {
-		stack_height_global_idx: generate_stack_height_global(&mut module),
-		func_stack_costs: compute_stack_costs(&module)?,
+		stack_height_global_idx: generate_stack_height_global(
+			&mut module,
+			stack_height_export_name,
+		),
+		func_stack_costs: compute_stack_costs(&module, &injection_fn)?,
 		stack_limit,
 	};
 
-	instrument_functions(&mut ctx, &mut module)?;
-	let module = thunk::generate_thunks(&mut ctx, module)?;
+	instrument_functions(&mut ctx, &mut module, &injection_fn)?;
+	let module = thunk::generate_thunks(&mut ctx, module, &injection_fn)?;
 
 	Ok(module)
 }
 
 /// Generate a new global that will be used for tracking current stack height.
-fn generate_stack_height_global(module: &mut elements::Module) -> u32 {
+fn generate_stack_height_global(
+	module: &mut elements::Module,
+	stack_height_export_name: Option<&str>,
+) -> u32 {
 	let global_entry = builder::global()
 		.value_type()
 		.i32()
@@ -136,35 +147,71 @@ fn generate_stack_height_global(module: &mut elements::Module) -> u32 {
 		.init_expr(Instruction::I32Const(0))
 		.build();
 
-	// Try to find an existing global section.
-	for section in module.sections_mut() {
-		if let elements::Section::Global(gs) = section {
-			gs.entries_mut().push(global_entry);
-			return (gs.entries().len() as u32) - 1
+	let stack_height_global_idx = match module.global_section_mut() {
+		Some(global_section) => {
+			global_section.entries_mut().push(global_entry);
+			(global_section.entries().len() as u32) - 1
+		},
+		None => {
+			module.sections_mut().push(elements::Section::Global(
+				elements::GlobalSection::with_entries(vec![global_entry]),
+			));
+			0
+		},
+	};
+
+	if let Some(stack_height_export_name) = stack_height_export_name {
+		let export_entry = elements::ExportEntry::new(
+			stack_height_export_name.into(),
+			elements::Internal::Global(stack_height_global_idx),
+		);
+
+		match module.export_section_mut() {
+			Some(export_section) => {
+				export_section.entries_mut().push(export_entry);
+			},
+			None => {
+				module.sections_mut().push(elements::Section::Export(
+					elements::ExportSection::with_entries(vec![export_entry]),
+				));
+			},
 		}
 	}
 
-	// Existing section not found, create one!
-	module
-		.sections_mut()
-		.push(elements::Section::Global(elements::GlobalSection::with_entries(vec![global_entry])));
-	0
+	stack_height_global_idx
 }
 
 /// Calculate stack costs for all functions.
 ///
 /// Returns a vector with a stack cost for each function, including imports.
-fn compute_stack_costs(module: &elements::Module) -> Result<Vec<u32>, &'static str> {
-	let func_imports = module.import_count(elements::ImportCountType::Function);
+fn compute_stack_costs<I: IntoIterator<Item = Instruction>>(
+	module: &elements::Module,
+	injection_fn: impl Fn(&FunctionType) -> I,
+) -> Result<Vec<u32>, &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
+	let functions_space = module
+		.functions_space()
+		.try_into()
+		.map_err(|_| "Can't convert functions space to u32")?;
 
-	// TODO: optimize!
-	(0..module.functions_space())
+	// Don't create context when there are no functions (this will fail).
+	if functions_space == 0 {
+		return Ok(Vec::new())
+	}
+
+	// This context already contains the module, number of imports and section references.
+	// So we can use it to optimize access to these objects.
+	let context: MaxStackHeightCounterContext = module.try_into()?;
+
+	(0..functions_space)
 		.map(|func_idx| {
-			if func_idx < func_imports {
+			if func_idx < context.func_imports {
 				// We can't calculate stack_cost of the import functions.
 				Ok(0)
 			} else {
-				compute_stack_cost(func_idx as u32, module)
+				compute_stack_cost(func_idx, context, &injection_fn)
 			}
 		})
 		.collect()
@@ -173,17 +220,22 @@ fn compute_stack_costs(module: &elements::Module) -> Result<Vec<u32>, &'static s
 /// Stack cost of the given *defined* function is the sum of it's locals count (that is,
 /// number of arguments plus number of local variables) and the maximal stack
 /// height.
-fn compute_stack_cost(func_idx: u32, module: &elements::Module) -> Result<u32, &'static str> {
+fn compute_stack_cost<I: IntoIterator<Item = Instruction>>(
+	func_idx: u32,
+	context: MaxStackHeightCounterContext,
+	injection_fn: impl Fn(&FunctionType) -> I,
+) -> Result<u32, &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
 	// To calculate the cost of a function we need to convert index from
 	// function index space to defined function spaces.
-	let func_imports = module.import_count(elements::ImportCountType::Function) as u32;
 	let defined_func_idx = func_idx
-		.checked_sub(func_imports)
+		.checked_sub(context.func_imports)
 		.ok_or("This should be a index of a defined function")?;
 
-	let code_section =
-		module.code_section().ok_or("Due to validation code section should exists")?;
-	let body = &code_section
+	let body = context
+		.code_section
 		.bodies()
 		.get(defined_func_idx as usize)
 		.ok_or("Function body is out of bounds")?;
@@ -194,25 +246,48 @@ fn compute_stack_cost(func_idx: u32, module: &elements::Module) -> Result<u32, &
 			locals_count.checked_add(local_group.count()).ok_or("Overflow in local count")?;
 	}
 
-	let max_stack_height = max_height::compute(defined_func_idx, module)?;
+	let max_stack_height = MaxStackHeightCounter::new_with_context(context, injection_fn)
+		.count_instrumented_calls(true)
+		.compute_for_defined_func(defined_func_idx)?;
 
 	locals_count
 		.checked_add(max_stack_height)
 		.ok_or("Overflow in adding locals_count and max_stack_height")
 }
 
-fn instrument_functions(
+fn instrument_functions<I: IntoIterator<Item = Instruction>>(
 	ctx: &mut Context,
 	module: &mut elements::Module,
-) -> Result<(), &'static str> {
-	for section in module.sections_mut() {
-		if let elements::Section::Code(code_section) = section {
-			for func_body in code_section.bodies_mut() {
-				let opcodes = func_body.code_mut();
-				instrument_function(ctx, opcodes)?;
-			}
+	injection_fn: impl Fn(&FunctionType) -> I,
+) -> Result<(), &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
+	if ctx.func_stack_costs.is_empty() {
+		return Ok(())
+	}
+
+	// Func stack costs collection is not empty, so stack height counter has counted costs
+	// for module with non empty function and type sections.
+	let types = module.type_section().map(|ts| ts.types()).expect("checked earlier").to_vec();
+	let functions = module
+		.function_section()
+		.map(|fs| fs.entries())
+		.expect("checked earlier")
+		.to_vec();
+
+	if let Some(code_section) = module.code_section_mut() {
+		for (func_idx, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
+			let opcodes = func_body.code_mut();
+
+			let signature_index = &functions[func_idx];
+			let signature = &types[signature_index.type_ref() as usize];
+			let Type::Function(signature) = signature;
+
+			instrument_function(ctx, opcodes, signature, &injection_fn)?;
 		}
 	}
+
 	Ok(())
 }
 
@@ -222,8 +297,8 @@ fn instrument_functions(
 /// Before:
 ///
 /// ```text
-/// get_local 0
-/// get_local 1
+/// local.get 0
+/// local.get 1
 /// call 228
 /// drop
 /// ```
@@ -231,8 +306,8 @@ fn instrument_functions(
 /// After:
 ///
 /// ```text
-/// get_local 0
-/// get_local 1
+/// local.get 0
+/// local.get 1
 ///
 /// < ... preamble ... >
 ///
@@ -242,7 +317,15 @@ fn instrument_functions(
 ///
 /// drop
 /// ```
-fn instrument_function(ctx: &mut Context, func: &mut Instructions) -> Result<(), &'static str> {
+fn instrument_function<I: IntoIterator<Item = Instruction>>(
+	ctx: &mut Context,
+	func: &mut Instructions,
+	signature: &FunctionType,
+	injection_fn: impl Fn(&FunctionType) -> I,
+) -> Result<(), &'static str>
+where
+	I::IntoIter: ExactSizeIterator + Clone,
+{
 	use Instruction::*;
 
 	struct InstrumentCall {
@@ -270,8 +353,11 @@ fn instrument_function(ctx: &mut Context, func: &mut Instructions) -> Result<(),
 		})
 		.collect();
 
-	// The `instrumented_call!` contains the call itself. This is why we need to subtract one.
-	let len = func.elements().len() + calls.len() * (instrument_call!(0, 0, 0, 0).len() - 1);
+	// To pre-allocate memory, we need to count `8 + N + 6 - 1`, i.e. `13 + N`.
+	// We need to subtract one because it is assumed that we already have the original call
+	// instruction in `func.elements()`. See `instrument_call` function for details.
+	let body_of_condition = injection_fn(signature).into_iter();
+	let len = func.elements().len() + calls.len() * (13 + body_of_condition.len());
 	let original_instrs = mem::replace(func.elements_mut(), Vec::with_capacity(len));
 	let new_instrs = func.elements_mut();
 
@@ -280,13 +366,15 @@ fn instrument_function(ctx: &mut Context, func: &mut Instructions) -> Result<(),
 		// whether there is some call instruction at this position that needs to be instrumented
 		let did_instrument = if let Some(call) = calls.peek() {
 			if call.offset == original_pos {
-				let new_seq = instrument_call!(
+				instrument_call(
+					new_instrs,
 					call.callee,
 					call.cost as i32,
 					ctx.stack_height_global_idx(),
-					ctx.stack_limit()
+					ctx.stack_limit(),
+					body_of_condition.clone(),
+					[],
 				);
-				new_instrs.extend_from_slice(&new_seq);
 				true
 			} else {
 				false
@@ -309,10 +397,91 @@ fn instrument_function(ctx: &mut Context, func: &mut Instructions) -> Result<(),
 	Ok(())
 }
 
+/// This function generates preamble and postamble.
+fn instrument_call(
+	instructions: &mut Vec<Instruction>,
+	callee_idx: u32,
+	callee_stack_cost: i32,
+	stack_height_global_idx: u32,
+	stack_limit: u32,
+	body_of_condition: impl IntoIterator<Item = Instruction>,
+	arguments: impl IntoIterator<Item = Instruction>,
+) {
+	use Instruction::*;
+
+	// 8 + body_of_condition.len() + 1 instructions
+	generate_preamble(
+		instructions,
+		callee_stack_cost,
+		stack_height_global_idx,
+		stack_limit,
+		body_of_condition,
+	);
+
+	// arguments.len() instructions
+	instructions.extend(arguments);
+
+	// Original call, 1 instruction
+	instructions.push(Call(callee_idx));
+
+	// 4 instructions
+	generate_postamble(instructions, callee_stack_cost, stack_height_global_idx);
+}
+
+/// This function generates preamble.
+fn generate_preamble(
+	instructions: &mut Vec<Instruction>,
+	callee_stack_cost: i32,
+	stack_height_global_idx: u32,
+	stack_limit: u32,
+	body_of_condition: impl IntoIterator<Item = Instruction>,
+) {
+	use Instruction::*;
+
+	// 8 instructions
+	instructions.extend_from_slice(&[
+		// stack_height += stack_cost(F)
+		GetGlobal(stack_height_global_idx),
+		I32Const(callee_stack_cost),
+		I32Add,
+		SetGlobal(stack_height_global_idx),
+		// if stack_counter > LIMIT: unreachable or custom instructions
+		GetGlobal(stack_height_global_idx),
+		I32Const(stack_limit as i32),
+		I32GtU,
+		If(elements::BlockType::NoResult),
+	]);
+
+	// body_of_condition.len() instructions
+	instructions.extend(body_of_condition);
+
+	// 1 instruction
+	instructions.push(End);
+}
+
+/// This function generates postamble.
+#[inline]
+fn generate_postamble(
+	instructions: &mut Vec<Instruction>,
+	callee_stack_cost: i32,
+	stack_height_global_idx: u32,
+) {
+	use Instruction::*;
+
+	// 4 instructions
+	instructions.extend_from_slice(&[
+		// stack_height -= stack_cost(F)
+		GetGlobal(stack_height_global_idx),
+		I32Const(callee_stack_cost),
+		I32Sub,
+		SetGlobal(stack_height_global_idx),
+	]);
+}
+
 fn resolve_func_type(
 	func_idx: u32,
 	module: &elements::Module,
-) -> Result<&elements::FunctionType, &'static str> {
+) -> Result<&FunctionType, &'static str> {
 	let types = module.type_section().map(|ts| ts.types()).unwrap_or(&[]);
 	let functions = module.function_section().map(|fs| fs.entries()).unwrap_or(&[]);
 
@@ -366,8 +535,8 @@ mod tests {
 			r#"
 (module
 	(func (export "i32.add") (param i32 i32) (result i32)
-		get_local 0
-	get_local 1
+		local.get 0
+	local.get 1
 	i32.add
 	)
 )

@@ -11,10 +11,8 @@
     i32.add
   )
   (func (;3;) (type 1) (param i32 i32) (result i32)
-    local.get 0
-    local.get 1
     global.get 0
-    i32.const 4
+    i32.const 9
     i32.add
     global.set 0
     global.get 0
@@ -23,9 +21,11 @@
     if ;; label = @1
       unreachable
     end
+    local.get 0
+    local.get 1
     call 2
     global.get 0
-    i32.const 4
+    i32.const 9
     i32.sub
     global.set 0
   )

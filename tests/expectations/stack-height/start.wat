@@ -9,7 +9,7 @@
   (func (;2;) (type 1))
   (func (;3;) (type 1)
     global.get 0
-    i32.const 3
+    i32.const 7
     i32.add
     global.set 0
     global.get 0
@@ -20,13 +20,13 @@
     end
     call $start
     global.get 0
-    i32.const 3
+    i32.const 7
     i32.sub
     global.set 0
   )
   (func (;4;) (type 1)
     global.get 0
-    i32.const 2
+    i32.const 6
     i32.add
     global.set 0
     global.get 0
@@ -37,7 +37,7 @@
     end
     call 2
     global.get 0
-    i32.const 2
+    i32.const 6
     i32.sub
     global.set 0
   )
