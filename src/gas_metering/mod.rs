@@ -7,11 +7,12 @@
 #[cfg(test)]
 mod validation;
 
+use super::utils;
 use alloc::{vec, vec::Vec};
 use core::{cmp::min, mem, num::NonZeroU32};
 use parity_wasm::{
 	builder,
-	elements::{self, IndexMap, Instruction, ValueType},
+	elements::{self, Instruction, ValueType},
 };
 
 /// An interface that describes instruction costs.
@@ -167,114 +168,56 @@ pub fn inject<R: Rules>(
 	let module = mbuilder.build();
 	let gas_func = module.import_count(elements::ImportCountType::Function) - 1;
 
-	post_injection_handler(module, rules, gas_func, gas_func as u32, 1)
+	let module = utils::rewrite_sections_after_insertion(module, gas_func as u32, 1)?;
+
+	post_injection_handler(module, rules, gas_func)
 }
 
 /// Helper procedure that makes adjustments after gas metering function injected.
 ///
-/// See documentation for [`inject`] for more details.
+/// See documentation for [`inject`] details.
 pub fn post_injection_handler<R: Rules>(
 	mut module: elements::Module,
 	rules: &R,
 	gas_charge_index: usize,
-	inserted_index: u32,
-	inserted_count: u32,
 ) -> Result<elements::Module, elements::Module> {
-	if inserted_count == 0 {
-		return Err(module)
-	}
-
 	// calculate actual function index of the imported definition
 	//    (subtract all imports that are NOT functions)
 
 	let import_count = module.import_count(elements::ImportCountType::Function);
 	let total_func = module.functions_space() as u32;
 	let mut need_grow_counter = false;
-	let mut result = Ok(());
 
-	// Updating calling addresses (all calls to function index >= `inserted_index` should be
-	// incremented)
-	'outer_loop: for section in module.sections_mut() {
-		match section {
-			elements::Section::Code(code_section) =>
-				for (i, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
-					if i + import_count == gas_charge_index {
-						continue
-					}
+	if let Some(code_section) = module.code_section_mut() {
+		for (i, func_body) in code_section.bodies_mut().iter_mut().enumerate() {
+			if i + import_count == gas_charge_index {
+				continue
+			}
 
-					for instruction in func_body.code_mut().elements_mut().iter_mut() {
-						if let Instruction::Call(call_index) = instruction {
-							if *call_index >= inserted_index {
-								*call_index += inserted_count
-							}
-						}
-					}
+			let result = func_body
+				.locals()
+				.iter()
+				.try_fold(0u32, |count, val_type| count.checked_add(val_type.count()))
+				.ok_or(())
+				.and_then(|locals_count| {
+					inject_counter(
+						func_body.code_mut(),
+						rules,
+						locals_count,
+						gas_charge_index as u32,
+					)
+				});
 
-					result = func_body
-						.locals()
-						.iter()
-						.try_fold(0u32, |count, val_type| count.checked_add(val_type.count()))
-						.ok_or(())
-						.and_then(|locals_count| {
-							inject_counter(
-								func_body.code_mut(),
-								rules,
-								locals_count,
-								gas_charge_index as u32,
-							)
-						});
-					if result.is_err() {
-						break 'outer_loop
-					}
+			if result.is_err() {
+				return Err(module)
+			}
 
-					if rules.memory_grow_cost().enabled() &&
-						inject_grow_counter(func_body.code_mut(), total_func) > 0
-					{
-						need_grow_counter = true;
-					}
-				},
-			elements::Section::Export(export_section) => {
-				for export in export_section.entries_mut() {
-					if let elements::Internal::Function(func_index) = export.internal_mut() {
-						if *func_index >= inserted_index {
-							*func_index += inserted_count
-						}
-					}
-				}
-			},
-			elements::Section::Element(elements_section) => {
-				// Note that we do not need to check the element type referenced because in the
-				// WebAssembly 1.0 spec, the only allowed element type is funcref.
-				for segment in elements_section.entries_mut() {
-					// update all indirect call addresses initial values
-					for func_index in segment.members_mut() {
-						if *func_index >= inserted_index {
-							*func_index += inserted_count
-						}
-					}
-				}
-			},
-			elements::Section::Start(start_idx) =>
-				if *start_idx >= inserted_index {
-					*start_idx += inserted_count
-				},
-			elements::Section::Name(s) =>
-				for functions in s.functions_mut() {
-					*functions.names_mut() =
-						IndexMap::from_iter(functions.names().iter().map(|(mut idx, name)| {
-							if idx >= inserted_index {
-								idx += inserted_count;
-							}
-
-							(idx, name.clone())
-						}));
-				},
-			_ => {},
+			if rules.memory_grow_cost().enabled() &&
+				inject_grow_counter(func_body.code_mut(), total_func) > 0
+			{
+				need_grow_counter = true;
+			}
 		}
-	}
-
-	if result.is_err() {
-		return Err(module)
 	}
 
 	match need_grow_counter {
