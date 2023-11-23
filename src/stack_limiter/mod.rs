@@ -11,7 +11,7 @@ use parity_wasm::{
 mod max_height;
 mod thunk;
 
-struct Context {
+pub(crate) struct Context {
 	stack_height_global_idx: u32,
 	func_stack_costs: Vec<u32>,
 	stack_limit: u32,
