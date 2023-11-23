@@ -17,7 +17,7 @@ struct Thunk {
 	idx: Option<u32>,
 }
 
-pub fn generate_thunks<I: IntoIterator<Item = Instruction>>(
+pub(crate) fn generate_thunks<I: IntoIterator<Item = Instruction>>(
 	ctx: &mut Context,
 	module: elements::Module,
 	injection_fn: impl Fn(&FunctionType) -> I,

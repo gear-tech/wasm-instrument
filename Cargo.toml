@@ -1,6 +1,6 @@
 [package]
 name = "gwasm-instrument"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 rust-version = "1.65.0"
 authors = ["Parity Technologies <admin@parity.io>"]
