@@ -175,7 +175,7 @@ pub fn inject<R: Rules>(
 
 /// Helper procedure that makes adjustments after gas metering function injected.
 ///
-/// See documentation for [`inject`] details.
+/// See documentation for [`inject`] for more details.
 pub fn post_injection_handler<R: Rules>(
 	mut module: elements::Module,
 	rules: &R,
