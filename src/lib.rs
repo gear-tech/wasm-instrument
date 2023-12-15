@@ -5,6 +5,7 @@ extern crate alloc;
 mod export_globals;
 pub mod gas_metering;
 pub mod stack_limiter;
+pub mod utils;
 
 pub use export_globals::export_mutable_globals;
 pub use parity_wasm;
