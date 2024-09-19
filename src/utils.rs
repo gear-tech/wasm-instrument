@@ -51,7 +51,7 @@ pub fn rewrite_sections_after_insertion(
 					*start_idx += inserted_count
 				},
 			Section::Name(s) =>
-				for functions in s.functions_mut() {
+				if let Some(functions) = s.functions_mut() {
 					*functions.names_mut() =
 						IndexMap::from_iter(functions.names().iter().map(|(mut idx, name)| {
 							if idx >= inserted_index {

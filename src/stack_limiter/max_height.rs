@@ -283,12 +283,20 @@ where
 		match opcode {
 			Nop => {},
 			Block(ty) | Loop(ty) | If(ty) => {
-				let end_arity = if *ty == BlockType::NoResult { 0 } else { 1 };
+				let (param_arity, end_arity) = match ty {
+					BlockType::NoResult => (0, 0),
+					BlockType::Value(_) => (0, 1),
+					BlockType::TypeIndex(x) => {
+						let Type::Function(ty) =
+							type_section.types().get(*x as usize).ok_or("Type not found")?;
+						(ty.params().len() as u32, ty.results().len() as u32)
+					},
+				};
 				let branch_arity = if let Loop(_) = *opcode { 0 } else { end_arity };
 				if let If(_) = *opcode {
 					stack.pop_values(1)?;
 				}
-				let height = stack.height();
+				let height = stack.height().checked_sub(param_arity).ok_or("Empty stack")?;
 				stack.push_frame(Frame {
 					is_polymorphic: false,
 					end_arity,
